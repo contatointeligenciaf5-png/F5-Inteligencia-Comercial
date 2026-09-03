@@ -1,51 +1,22 @@
-import { notion, dataSourceIds } from "./client";
+import { getNotionClient, pipelineDataSourceId, type Estado as EstadoFiltro } from "./client";
+import {
+  plainText,
+  selectValue,
+  statusValue,
+  numberValue,
+  dateValue,
+  formulaValue,
+  queryAllPages,
+  type NotionPage,
+} from "./mappers";
 import type { LeadPipeline } from "./types";
-
-/**
- * Extrai o texto puro de uma property Notion (rich_text ou title).
- */
-function plainText(prop: unknown): string | null {
-  const arr = (prop as { rich_text?: unknown[]; title?: unknown[] })
-    ?.rich_text ?? (prop as { title?: unknown[] })?.title;
-  if (!Array.isArray(arr) || arr.length === 0) return null;
-  return arr.map((t) => (t as { plain_text: string }).plain_text).join("");
-}
-
-function selectValue(prop: unknown): string | null {
-  return (prop as { select?: { name: string } | null })?.select?.name ?? null;
-}
-
-function statusValue(prop: unknown): string | null {
-  return (prop as { status?: { name: string } | null })?.status?.name ?? null;
-}
-
-function numberValue(prop: unknown): number | null {
-  return (prop as { number?: number | null })?.number ?? null;
-}
-
-function dateValue(prop: unknown): string | null {
-  return (prop as { date?: { start: string } | null })?.date?.start ?? null;
-}
-
-function formulaValue(prop: unknown): number | string | null {
-  const f = (prop as { formula?: { type: string; number?: number; string?: string } })
-    ?.formula;
-  if (!f) return null;
-  if (f.type === "number") return f.number ?? null;
-  if (f.type === "string") return f.string ?? null;
-  return null;
-}
 
 /**
  * Converte uma page do data source "Controle Geral" no shape LeadPipeline.
  * Ajuste os nomes de propriedade aqui se o schema no Notion mudar
  * (ver CLAUDE.md → "Modelo de dados" para a fonte de verdade).
  */
-export function mapLeadPipeline(page: {
-  id: string;
-  url: string;
-  properties: Record<string, unknown>;
-}): LeadPipeline {
+export function mapLeadPipeline(page: NotionPage): LeadPipeline {
   const p = page.properties;
   return {
     id: page.id,
@@ -75,27 +46,12 @@ export function mapLeadPipeline(page: {
 }
 
 /**
- * Busca todos os leads do pipeline (pagina automaticamente).
- * Uso: dentro de Server Components / Route Handlers apenas — nunca client-side
- * (o token do Notion não pode ser exposto ao browser).
+ * Busca os leads do pipeline. `estado` seleciona a data source:
+ * "Geral" = Controle Geral consolidado (Dashboard Geral), "SE"/"BA" = pipeline
+ * específico daquele estado (mesmo schema, ver CLAUDE.md).
  */
-export async function getPipelineLeads(): Promise<LeadPipeline[]> {
-  const leads: LeadPipeline[] = [];
-  let cursor: string | undefined;
-
-  do {
-    const res = await notion.dataSources.query({
-      data_source_id: dataSourceIds.pipeline,
-      start_cursor: cursor,
-      page_size: 100,
-    });
-    leads.push(
-      ...res.results
-        .filter((r): r is typeof r & { properties: Record<string, unknown> } => "properties" in r)
-        .map((r) => mapLeadPipeline(r as { id: string; url: string; properties: Record<string, unknown> })),
-    );
-    cursor = res.has_more ? (res.next_cursor ?? undefined) : undefined;
-  } while (cursor);
-
-  return leads;
+export async function getPipelineLeads(
+  estado: EstadoFiltro | "Geral" = "Geral",
+): Promise<LeadPipeline[]> {
+  return queryAllPages(getNotionClient(), pipelineDataSourceId(estado), mapLeadPipeline);
 }
